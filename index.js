@@ -7,8 +7,7 @@ const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 
-// Hier speichern wir die geparsten Node-Daten
-let parsedNodes = [];
+let allNodesData = [];
 
 // Verbindung zum FM-Funknetz MQTT Broker herstellen
 const mqttClient = mqtt.connect('mqtt://dashboard.fm-funknetz.de');
@@ -26,29 +25,35 @@ mqttClient.on('message', (topic, payload) => {
     try {
         const messageStr = payload.toString();
         
-        // Wir suchen gezielt nach dem Reflektor-Status-JSON
         if (topic.includes('status') && messageStr.includes('nodes')) {
             const data = JSON.parse(messageStr);
             
             if (data.satellite && data.satellite.parent_nodes) {
-                parsedNodes = data.satellite.parent_nodes.map(node => ({
-                    col1: node.callsign || 'Unbekannt',
-                    col2: node.Location || node.nodeLocation || 'Kein Standort',
-                    col3: `TG: ${node.tg} | SysOp: ${node.SysOp || 'N/A'}`
-                }));
+                allNodesData = data.satellite.parent_nodes;
             }
         }
     } catch (e) {
-        // Ignorieren von Parse-Fehlern bei Nicht-JSON Nachrichten
+        // Fehler ignorieren
     }
 });
 
-// API-Endpunkt für Ihre Website
+// API-Endpunkt, der nach der Talkgroup filtert
 app.get('/api/tg/:tgId', (req, res) => {
+    const requestedTg = parseInt(req.params.tgId, 10);
+    
+    // Filtere nur die Nodes heraus, die genau auf dieser Talkgroup sind
+    const filteredNodes = allNodesData
+        .filter(node => node.tg === requestedTg)
+        .map(node => ({
+            col1: node.callsign || 'Unbekannt',
+            col2: node.Location || node.nodeLocation || 'Kein Standort',
+            col3: `SysOp: ${node.SysOp || node.Sysop || 'N/A'}`
+        }));
+
     res.json({
         success: true,
         tg: req.params.tgId,
-        data: parsedNodes.length > 0 ? parsedNodes : [{ col1: "Warte auf Status-Daten...", col2: "", col3: "" }]
+        data: filteredNodes.length > 0 ? filteredNodes : [{ col1: `Keine Stationen auf TG ${requestedTg}`, col2: "", col3: "" }]
     });
 });
 
