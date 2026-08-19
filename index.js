@@ -7,14 +7,23 @@ const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 
-let liveTalkers = {
-    "313": [{ col1: "Warte auf PTT...", col2: "Warte auf Daten", col3: "" }]
+// Interne Datenbank für Standorte, die wir aus dem Status-Stream lernen
+let stationDatabase = {};
+
+// Hier speichern wir die aktuell sprechende Station pro Talkgroup
+let currentTalkers = {
+    "313": [{ col1: "Warte auf PTT / Live-Daten...", col2: "", col3: "" }]
 };
 
 const mqttClient = mqtt.connect('mqtt://dashboard.fm-funknetz.de');
 
 mqttClient.on('connect', () => {
-    mqttClient.subscribe('#');
+    console.log('Verbunden mit MQTT-Broker');
+    mqttClient.subscribe('#', (err) => {
+        if (!err) {
+            console.log('Abonniert auf alle Topics');
+        }
+    });
 });
 
 mqttClient.on('message', (topic, payload) => {
@@ -22,30 +31,50 @@ mqttClient.on('message', (topic, payload) => {
         const messageStr = payload.toString();
         const data = JSON.parse(messageStr);
         
-        // Sobald du sprichst (DL4KAL), drucken wir das GESAMTE JSON in die Render-Logs!
-        if (messageStr.includes('DL4KAL')) {
-            console.log('=== VOLLSTÄNDIGES JSON FÜR DL4KAL ===');
-            console.log(JSON.stringify(data, null, 2));
-            console.log('=====================================');
+        // QUELLE 1: Server-Status-Stream (Dient als Nachschlagewerk für Standorte & Locators)
+        if (topic.includes('status') && data.satellite && data.satellite.parent_nodes) {
+            data.satellite.parent_nodes.forEach(node => {
+                if (node.callsign) {
+                    let loc = node.Location || node.nodeLocation || node.city || "";
+                    let grid = node.Locator || node.locator || node.qra || "";
+                    stationDatabase[node.callsign.toUpperCase()] = {
+                        location: loc,
+                        locator: grid
+                    };
+                }
+            });
         }
-        
+
+        // QUELLE 2: Live-PTT-Stream (Wer spricht gerade?)
         if (data.callsign || data.talker || topic.includes('talker')) {
             let stationName = data.callsign || data.talker || "Unbekannt";
+            let upperCall = stationName.toUpperCase();
             
-            // Vorübergehend geben wir das gesamte Objekt als JSON-String aus, 
-            // damit wir im Browser sofort sehen, wo Bonn und JO30ms versteckt sind
-            let details = JSON.stringify(data);
+            let detailsText = "Live-Station / Mobil";
             
-            if (topic.includes('313') || (data.tg && data.tg === 313) || messageStr.includes('DL4KAL')) {
-                liveTalkers["313"] = [{
+            // Prüfen, ob wir für dieses Rufzeichen in unserer Datenbank einen Standort/Locator haben
+            if (stationDatabase[upperCall]) {
+                let dbEntry = stationDatabase[upperCall];
+                if (dbEntry.location && dbEntry.locator) {
+                    detailsText = `${dbEntry.location} / ${dbEntry.locator}`;
+                } else if (dbEntry.location) {
+                    detailsText = dbEntry.location;
+                } else if (dbEntry.locator) {
+                    detailsText = `QRA: ${dbEntry.locator}`;
+                }
+            }
+            
+            // Wenn es zur Talkgroup 313 gehört
+            if (topic.includes('313') || (data.tg && Number(data.tg) === 313)) {
+                currentTalkers["313"] = [{
                     col1: stationName,
-                    col2: details, // Hier sehen wir jetzt roh alle Felder!
+                    col2: detailsText,
                     col3: "🔴 Sprechend / Aktiv"
                 }];
             }
         }
     } catch (e) {
-        // Ignorieren
+        // Ignorieren von Parse-Fehlern bei Nicht-JSON
     }
 });
 
@@ -54,10 +83,10 @@ app.get('/api/tg/:tgId', (req, res) => {
     res.json({
         success: true,
         tg: tgId,
-        data: liveTalkers[tgId]
+        data: currentTalkers[tgId] || [{ col1: "Keine aktive Station", col2: "", col3: "" }]
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`Proxy läuft`);
+    console.log(`Intelligenter Proxy läuft auf Port ${PORT}`);
 });
