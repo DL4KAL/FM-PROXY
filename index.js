@@ -9,7 +9,6 @@ app.use(cors());
 
 let stationDatabase = {};
 
-// Wir speichern den letzten aktiven Talker inklusive Zeitstempel
 let activeTalkers = {
     "313": { station: null, details: "", timestamp: 0 }
 };
@@ -40,8 +39,11 @@ mqttClient.on('message', (topic, payload) => {
             });
         }
 
-        // 2. Live-PTT-Stream (Wer spricht JETZT?)
-        if (data.callsign || data.talker || topic.includes('talker')) {
+        // 2. Strenger Check: Gehört das Live-Event EXAKT zur Talkgroup 313?
+        const isTg313Topic = topic.includes('/313') || topic.includes('tg313') || topic.endsWith('/313');
+        const isTg313Data = data.tg && Number(data.tg) === 313;
+
+        if ((isTg313Topic || isTg313Data) && (data.callsign || data.talker)) {
             let stationName = data.callsign || data.talker || "Unbekannt";
             let upperCall = stationName.toUpperCase();
             
@@ -57,31 +59,26 @@ mqttClient.on('message', (topic, payload) => {
                 }
             }
             
-            // Wenn es zur Talkgroup 313 gehört, aktualisieren wir den Zeitstempel auf "JETZT"
-            if (topic.includes('313') || (data.tg && Number(data.tg) === 313)) {
-                activeTalkers["313"] = {
-                    station: stationName,
-                    details: detailsText,
-                    timestamp: Date.now() // Aktuelle Millisekunden
-                };
-            }
+            activeTalkers["313"] = {
+                station: stationName,
+                details: detailsText,
+                timestamp: Date.now()
+            };
         }
     } catch (e) {
         // Ignorieren
     }
 });
 
-// API-Endpunkt mit automatischem Timeout (z. B. nach 8 Sekunden Inaktivität)
+// API-Endpunkt mit exakt 4 Sekunden Hang-on-Time (4000 ms)
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
     
-    // Prüfen, ob in den letzten 8 Sekunden ein Signal kam
     const now = Date.now();
-    const timeoutLimit = 8000; // 8 Sekunden
+    const timeoutLimit = 4000; // 4 Sekunden Hang-on-Time
     
     if (currentData && currentData.station && (now - currentData.timestamp < timeoutLimit)) {
-        // Station ist frisch aktiv
         res.json({
             success: true,
             tg: tgId,
@@ -92,7 +89,6 @@ app.get('/api/tg/:tgId', (req, res) => {
             }]
         });
     } else {
-        // Keine aktuelle Aktivität mehr -> Tabelle leeren
         res.json({
             success: true,
             tg: tgId,
@@ -106,5 +102,5 @@ app.get('/api/tg/:tgId', (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`Timeout-Proxy läuft auf Port ${PORT}`);
+    console.log(`Proxy läuft auf Port ${PORT}`);
 });
