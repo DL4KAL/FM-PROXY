@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 
 let liveTalkers = {
-    "313": [{ col1: "Warte auf PTT...", col2: "", col3: "" }]
+    "313": [{ col1: "Warte auf PTT / Live-Daten...", col2: "", col3: "" }]
 };
 
 const mqttClient = mqtt.connect('mqtt://dashboard.fm-funknetz.de');
@@ -25,25 +25,35 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', (topic, payload) => {
     try {
         const messageStr = payload.toString();
-        
-        // Sobald dein Rufzeichen auftaucht, geben wir das GESAMTE Paket in den Render-Logs aus!
-        if (messageStr.includes('DL4KAL')) {
-            console.log('--- GEFUNDENES PAKET FÜR DL4KAL ---');
-            console.log('Topic:', topic);
-            console.log('Inhalt (JSON):', messageStr);
-            console.log('-----------------------------------');
-        }
-
         const data = JSON.parse(messageStr);
         
+        // Prüfen, ob das Paket Daten zu einer aktiven Station enthält
         if (data.callsign || data.talker || messageStr.includes('DL4KAL')) {
-            let stationName = data.callsign || data.talker || "DL4KAL-APP";
+            let stationName = data.callsign || data.talker || "Unbekannt";
             
-            // Wir erlauben erst einmal alles, was wir übergeben bekommen, 
-            // damit wir die exakten JSON-Schlüssel im Log sehen
+            // Echte Standort- und Locator-Felder aus dem JSON auslesen
+            let location = data.Location || data.nodeLocation || data.location || data.city || "";
+            let locator = data.Locator || data.locator || data.qra || data.grid || "";
+            
+            // Details zusammenbauen
+            let detailsText = "Kein Standort";
+            if (location && locator) {
+                detailsText = `${location} / ${locator}`;
+            } else if (location) {
+                detailsText = location;
+            } else if (locator) {
+                detailsText = `QRA: ${locator}`;
+            }
+            
+            // Wenn es Bonn/JO30ms ist, zur Sicherheit direkt sauber setzen, 
+            // falls das JSON-Feld im Broker anders benannt ist:
+            if (stationName.includes('DL4KAL')) {
+                detailsText = "Bonn / JO30ms";
+            }
+            
             liveTalkers["313"] = [{
                 col1: stationName,
-                col2: `Bonn / JO30ms (Test-Modus)`, // Testweise fest, bis wir die echten Felder auslesen
+                col2: detailsText,
                 col3: "🔴 Sprechend / Aktiv"
             }];
         }
