@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 
 let liveTalkers = {
-    "313": [{ col1: "Warte auf PTT...", col2: "", col3: "" }]
+    "313": [{ col1: "Warte auf PTT...", col2: "Warte auf Daten", col3: "" }]
 };
 
 const mqttClient = mqtt.connect('mqtt://dashboard.fm-funknetz.de');
@@ -22,36 +22,30 @@ mqttClient.on('message', (topic, payload) => {
         const messageStr = payload.toString();
         const data = JSON.parse(messageStr);
         
-        // Prüfen, ob das Paket eine aktive Station enthält (PTT Ereignis)
-        // Wir suchen nach Feldern wie callsign, talker, oder PTT-Events
+        // Sobald du sprichst (DL4KAL), drucken wir das GESAMTE JSON in die Render-Logs!
+        if (messageStr.includes('DL4KAL')) {
+            console.log('=== VOLLSTÄNDIGES JSON FÜR DL4KAL ===');
+            console.log(JSON.stringify(data, null, 2));
+            console.log('=====================================');
+        }
+        
         if (data.callsign || data.talker || topic.includes('talker')) {
-            
-            // 1. Callsign/Name extrahieren
             let stationName = data.callsign || data.talker || "Unbekannt";
             
-            // 2. Intelligente Suche nach Standort & Locator
-            // Wir prüfen alle gängigen Felder, die das FM-Funknetz verwendet
-            let location = data.Location || data.city || data.nodeLocation || data.loc || "Kein Standort";
-            let locator = data.Locator || data.grid || data.qra || data.loc_id || "";
+            // Vorübergehend geben wir das gesamte Objekt als JSON-String aus, 
+            // damit wir im Browser sofort sehen, wo Bonn und JO30ms versteckt sind
+            let details = JSON.stringify(data);
             
-            // 3. Details zusammenbauen
-            let details = location;
-            if (locator) {
-                // Wenn ein Locator gefunden wurde, hängen wir ihn in Klammern an
-                details += ` / ${locator}`;
-            }
-            
-            // Nur aktualisieren, wenn es für die Talkgroup relevant ist
-            if (topic.includes('313') || (data.tg && data.tg === 313)) {
+            if (topic.includes('313') || (data.tg && data.tg === 313) || messageStr.includes('DL4KAL')) {
                 liveTalkers["313"] = [{
                     col1: stationName,
-                    col2: details,
+                    col2: details, // Hier sehen wir jetzt roh alle Felder!
                     col3: "🔴 Sprechend / Aktiv"
                 }];
             }
         }
     } catch (e) {
-        // Nicht-JSON Pakete ignorieren
+        // Ignorieren
     }
 });
 
