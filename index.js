@@ -7,19 +7,19 @@ const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 
-// Hier speichern wir die Live-Daten der aktiven Stationen pro TG
-let activeTalkers = {
-    "313": []
+// Wir speichern hier die letzten aktiven Stationen pro Talkgroup
+let liveTalkers = {
+    "313": [{ col1: "Warte auf PTT / Live-Daten...", col2: "", col3: "" }]
 };
 
 // Verbindung zum FM-Funknetz MQTT Broker herstellen
 const mqttClient = mqtt.connect('mqtt://dashboard.fm-funknetz.de');
 
 mqttClient.on('connect', () => {
-    console.log('Verbunden mit FM-Funknetz MQTT-Broker für Live-Talker');
+    console.log('Verbunden mit MQTT-Broker für Live-Erfassung');
     mqttClient.subscribe('#', (err) => {
         if (!err) {
-            console.log('Abonniert auf alle MQTT-Topics');
+            console.log('Abonniert auf alle Topics (#)');
         }
     });
 });
@@ -27,43 +27,46 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', (topic, payload) => {
     try {
         const messageStr = payload.toString();
-        const data = JSON.parse(messageStr);
-
-        // Wir prüfen, ob das Paket Informationen über aktive Sprecher (Talker) oder Nodes enthält
-        // Viele Reflektoren senden Live-Events, wenn jemand die PTT drückt oder aktiv ist
-        if (messageStr.includes('isTalker') || messageStr.includes('talker') || topic.includes('talker')) {
-            console.log('Live-Aktivität entdeckt:', topic, messageStr);
+        
+        // Wir prüfen, ob die Nachricht Daten über einen aktiven Sprecher oder Call enthält
+        // Viele Dashboards senden JSON-Daten mit Feldern wie 'callsign', 'talker', 'active' etc.
+        if (messageStr.includes('DL4KAL') || messageStr.includes('isTalker') || messageStr.includes('callsign')) {
+            console.log(`Live-Event auf Topic ${topic}:`, messageStr);
         }
 
-        // Wenn es das Status-JSON ist, filtern wir nach Knoten, die aktuell auf TG 313 funken oder aktiv sind
-        if (topic.includes('status') && data.satellite && data.satellite.parent_nodes) {
-            const nodesOn313 = data.satellite.parent_nodes.filter(node => node.tg === 313 || node.isTalker === true);
+        // Versuche das JSON zu parsen, um zu sehen, ob es Live-Talker-Daten für TG 313 sind
+        const data = JSON.parse(messageStr);
+        
+        // Wenn das Paket Daten zu Talkern oder aktiven Stationen enthält:
+        if (data.callsign || data.talker || (data.satellite && data.satellite.parent_nodes)) {
+            // Hier fangen wir generisch ankommende Stationen ab
+            let stationName = data.callsign || data.talker || "Unbekannt";
+            let location = data.Location || data.nodeLocation || "Live-Station";
             
-            if (nodesOn313.length > 0) {
-                activeTalkers["313"] = nodesOn313.map(node => ({
-                    col1: node.callsign || 'Unbekannt',
-                    col2: `${node.Location || node.nodeLocation || 'Kein Standort'} (QRA: ${node.Locator || 'N/A'})`,
-                    col3: node.isTalker ? '🔴 SÄNDET JETZT' : `TG: ${node.tg} | SysOp: ${node.SysOp || node.Sysop || 'N/A'}`
-                }));
+            // Wenn die Nachricht zur TG 313 gehört oder dort aktiv ist
+            if (topic.includes('313') || (data.tg && Number(data.tg) === 313)) {
+                liveTalkers["313"] = [{
+                    col1: stationName,
+                    col2: location,
+                    col3: "🔴 Sprechend / Aktiv"
+                }];
             }
         }
     } catch (e) {
-        // Ignorieren, wenn Nachrichten kein JSON sind
+        // Nicht-JSON oder andere Nachrichten ignorieren
     }
 });
 
-// API-Endpunkt für Ihre Website
+// API-Endpunkt für deine Website
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
-    const data = activeTalkers[tgId] || [{ col1: "Keine aktive Station", col2: "", col3: "" }];
-
     res.json({
         success: true,
         tg: tgId,
-        data: data
+        data: liveTalkers[tgId] || [{ col1: "Keine aktive Station", col2: "", col3: "" }]
     });
 });
 
 app.listen(PORT, () => {
-    console.log(`Live-Talker-Proxy läuft auf Port ${PORT}`);
+    console.log(`Proxy-Server läuft auf Port ${PORT}`);
 });
