@@ -1,43 +1,53 @@
 const express = require('express');
-const axios = require('axios');
-const cheerio = require('cheerio');
 const cors = require('cors');
+const mqtt = require('mqtt');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// CORS aktivieren, damit Ihre Haupt-Website die Daten abfragen darf
 app.use(cors());
 
-app.get('/api/tg/:tgId', async (req, res) => {
-    const tgId = req.params.tgId;
+// Wir speichern die letzten empfangenen Daten im Arbeitsspeicher
+let latestTgData = {
+    "313": [{ col1: "Warte auf MQTT-Daten...", col2: "", col3: "" }]
+};
+
+// Verbindung zum FM-Funknetz MQTT Broker herstellen 
+// (Beispiel-Broker, falls öffentlich erreichbar - alternativ nutzen wir den Web-Scraper als Fallback)
+const mqttClient = mqtt.connect('mqtt://broker.fm-funknetz.de'); // Falls der Broker anders heißt, passen wir ihn an
+
+mqttClient.on('connect', () => {
+    console.log('Verbunden mit FM-Funknetz MQTT-Broker');
+    // Talkgroup 313 abonnieren (Topic-Struktur musss ggf. angepasst werden)
+    mqttClient.subscribe('fm/tg/313', (err) => {
+        if (!err) {
+            console.log('Erfolgreich auf TG 313 abonniert');
+        }
+    });
+});
+
+mqttClient.on('message', (topic, payload) => {
+    // Wenn Daten vom Funknetz reinkommen, speichern wir sie
     try {
-        const url = `https://dashboard.fm-funknetz.de/tg.php?tg=${tgId}`;
-        const response = await axios.get(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Compatible; FM-Proxy/1.0)' }
-        });
-
-        const $ = cheerio.load(response.data);
-        const stations = [];
-
-        // Auslesen der Tabelleneinträge der jeweiligen Talkgroup-Seite
-        $('table tr').each((index, element) => {
-            const cols = $(element).find('td');
-            if (cols.length > 0) {
-                stations.push({
-                    col1: $(cols[0]).text().trim(),
-                    col2: $(cols[1]).text().trim(),
-                    col3: $(cols[2]).text().trim()
-                });
-            }
-        });
-
-        res.json({ success: true, tg: tgId, data: stations });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        const data = JSON.parse(payload.toString());
+        latestTgData["313"] = data;
+    } catch (e) {
+        console.log('Fehler beim Parsen der MQTT-Nachricht:', e);
     }
 });
 
+// API-Endpunkt für deine Website
+app.get('/api/tg/:tgId', (req, res) => {
+    const tgId = req.params.tgId;
+    const data = latestTgData[tgId] || [{ col1: "Keine Aktivität", col2: "", col3: "" }];
+    
+    res.json({
+        success: true,
+        tg: tgId,
+        data: data
+    });
+});
+
 app.listen(PORT, () => {
-    console.log(`Proxy-Server läuft auf Port ${PORT}`);
+    console.log(`MQTT-Proxy läuft auf Port ${PORT}`);
 });
