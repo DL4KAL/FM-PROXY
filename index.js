@@ -38,7 +38,7 @@ mqttClient.on('message', (topic, payload) => {
             });
         }
 
-        // 2. Strenger Check für Talkgroup 313
+        // 2. Live-PTT-Ereignis für Talkgroup 313
         const isTg313Topic = topic.includes('/313') || topic.includes('tg313') || topic.endsWith('/313');
         const isTg313Data = data.tg && Number(data.tg) === 313;
 
@@ -58,6 +58,7 @@ mqttClient.on('message', (topic, payload) => {
                 }
             }
             
+            // Jeder eingehende Impuls aktualisiert den Zeitstempel sofort auf "JETZT"
             activeTalkers["313"] = {
                 station: stationName,
                 details: detailsText,
@@ -69,13 +70,13 @@ mqttClient.on('message', (topic, payload) => {
     }
 });
 
-// API-Endpunkt mit 4 Sekunden Hang-on-Time
+// API-Endpunkt: Bleibt solange aktiv, wie Signale einlaufen (+ 4 Sek. Puffer nach dem Loslassen)
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
     
     const now = Date.now();
-    const timeoutLimit = 4000; // 4 Sekunden Hang-on-Time
+    const timeoutLimit = 4000; // 4 Sekunden Puffer nach dem letzten Signal
     
     if (currentData && currentData.station && (now - currentData.timestamp < timeoutLimit)) {
         res.json({
