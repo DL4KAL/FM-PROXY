@@ -70,13 +70,13 @@ mqttClient.on('message', (topic, payload) => {
     }
 });
 
-// API-Endpunkt: Bleibt solange aktiv, wie Signale einlaufen (+ 4 Sek. Puffer nach dem Loslassen)
+// API-Endpunkt: Erhöhter Puffer von 10 Sekunden nach dem letzten Signal
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
     
     const now = Date.now();
-    const timeoutLimit = 4000; // 4 Sekunden Puffer nach dem letzten Signal
+    const timeoutLimit = 10000; // 10 Sekunden Puffer
     
     if (currentData && currentData.station && (now - currentData.timestamp < timeoutLimit)) {
         res.json({
