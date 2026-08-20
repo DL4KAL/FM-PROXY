@@ -8,7 +8,6 @@ const PORT = process.env.PORT || 10000;
 app.use(cors());
 
 let stationDatabase = {};
-
 let activeTalkers = {
     "313": { station: null, details: "", timestamp: 0 }
 };
@@ -39,7 +38,7 @@ mqttClient.on('message', (topic, payload) => {
             });
         }
 
-        // 2. Strenger Check: Gehört das Live-Event EXAKT zur Talkgroup 313?
+        // 2. Strenger Check für Talkgroup 313
         const isTg313Topic = topic.includes('/313') || topic.includes('tg313') || topic.endsWith('/313');
         const isTg313Data = data.tg && Number(data.tg) === 313;
 
@@ -70,7 +69,7 @@ mqttClient.on('message', (topic, payload) => {
     }
 });
 
-// API-Endpunkt mit exakt 4 Sekunden Hang-on-Time (4000 ms)
+// API-Endpunkt mit 4 Sekunden Hang-on-Time
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
