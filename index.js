@@ -38,14 +38,19 @@ mqttClient.on('message', (topic, payload) => {
             });
         }
 
-        // 2. Live-PTT-Ereignis für Talkgroup 313
+        // 2. Strenger Filter für echte Sprachübertragung (Talkgroup 313)
         const isTg313Topic = topic.includes('/313') || topic.includes('tg313') || topic.endsWith('/313');
         const isTg313Data = data.tg && Number(data.tg) === 313;
 
         if ((isTg313Topic || isTg313Data) && (data.callsign || data.talker)) {
-            let stationName = data.callsign || data.talker || "Unbekannt";
+            let stationName = data.callsign || data.talker || "";
             let upperCall = stationName.toUpperCase();
             
+            // Ignoriere reine App-Dienste oder Gateway-Knoten als aktive Sprecher
+            if (upperCall.includes("DL7MO-APP") || upperCall.includes("APRS") || upperCall === "") {
+                return;
+            }
+
             let detailsText = "Live-Station / Mobil";
             if (stationDatabase[upperCall]) {
                 let dbEntry = stationDatabase[upperCall];
@@ -58,7 +63,7 @@ mqttClient.on('message', (topic, payload) => {
                 }
             }
             
-            // Jeder eingehende Impuls aktualisiert den Zeitstempel sofort auf "JETZT"
+            // Nur echte Stationen aktualisieren den Zeitstempel
             activeTalkers["313"] = {
                 station: stationName,
                 details: detailsText,
@@ -70,13 +75,13 @@ mqttClient.on('message', (topic, payload) => {
     }
 });
 
-// API-Endpunkt: Erhöhter Puffer von 10 Sekunden nach dem letzten Signal
+// API-Endpunkt: 3 Sekunden Puffer, danach wird sauber auf "Keine aktive Station" geschaltet
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
     
     const now = Date.now();
-    const timeoutLimit = 10000; // 10 Sekunden Puffer
+    const timeoutLimit = 3000; // 3 Sekunden Puffer nach dem letzten echten Sprachpaket
     
     if (currentData && currentData.station && (now - currentData.timestamp < timeoutLimit)) {
         res.json({
