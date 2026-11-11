@@ -22,6 +22,7 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', (topic, payload) => {
     try {
         const messageStr = payload.toString();
+            console.log('MQTT', topic, payload.toString().slice(0, 300));
         const data = JSON.parse(messageStr);
         
         // 1. Standorte aus dem Status-Stream lernen
