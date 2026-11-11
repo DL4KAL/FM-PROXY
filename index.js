@@ -22,69 +22,64 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', (topic, payload) => {
     try {
         const messageStr = payload.toString();
-            console.log('MQTT', topic, payload.toString().slice(0, 300));
         const data = JSON.parse(messageStr);
-        
-        // 1. Standorte aus dem Status-Stream lernen
-        if (topic.includes('status') && data.satellite && data.satellite.parent_nodes) {
-            data.satellite.parent_nodes.forEach(node => {
-                if (node.callsign) {
-                    let loc = node.Location || node.nodeLocation || node.city || "";
-                    let grid = node.Locator || node.locator || node.qra || "";
-                    stationDatabase[node.callsign.toUpperCase()] = {
-                        location: loc,
-                        locator: grid
-                    };
-                }
-            });
+
+        // 1. Standorte aus den Node-Infos lernen
+        if (topic.startsWith('/server/state/nodes/') && data.call) {
+            stationDatabase[data.call.toUpperCase()] = {
+                location: data.location || "",
+                locator: data.locator || ""
+            };
         }
 
-        // 2. Strenger Filter für echte Sprachübertragung (Talkgroup 313)
-        const isTg313Topic = topic.includes('/313') || topic.includes('tg313') || topic.endsWith('/313');
-        const isTg313Data = data.tg && Number(data.tg) === 313;
+        // 2. Sprachübertragung auf TG 313 (Start/Stop)
+        if (topic.startsWith('/server/statethr/') && String(data.tg) === '313') {
+            const stationName = data.call || "";
+            const upperCall = stationName.toUpperCase();
 
-        if ((isTg313Topic || isTg313Data) && (data.callsign || data.talker)) {
-            let stationName = data.callsign || data.talker || "";
-            let upperCall = stationName.toUpperCase();
-            
-            // Ignoriere reine App-Dienste oder Gateway-Knoten als aktive Sprecher
-            if (upperCall.includes("DL7MO-APP") || upperCall.includes("APRS") || upperCall === "") {
+            if (!upperCall || upperCall.includes("DL7MO-APP") || upperCall.includes("APRS")) {
                 return;
             }
 
-            let detailsText = "Live-Station / Mobil";
-            if (stationDatabase[upperCall]) {
-                let dbEntry = stationDatabase[upperCall];
-                if (dbEntry.location && dbEntry.locator) {
-                    detailsText = `${dbEntry.location} / ${dbEntry.locator}`;
-                } else if (dbEntry.location) {
-                    detailsText = dbEntry.location;
-                } else if (dbEntry.locator) {
-                    detailsText = `QRA: ${dbEntry.locator}`;
+            if (data.talk === 'start') {
+                let detailsText = "Live-Station / Mobil";
+                const dbEntry = stationDatabase[upperCall];
+                if (dbEntry) {
+                    if (dbEntry.location && dbEntry.locator) {
+                        detailsText = `${dbEntry.location} / ${dbEntry.locator}`;
+                    } else if (dbEntry.location) {
+                        detailsText = dbEntry.location;
+                    } else if (dbEntry.locator) {
+                        detailsText = `QRA: ${dbEntry.locator}`;
+                    }
+                }
+
+                activeTalkers["313"] = {
+                    station: stationName,
+                    details: detailsText,
+                    timestamp: Date.now()
+                };
+            } else if (data.talk === 'stop') {
+                if (activeTalkers["313"].station === stationName) {
+                    activeTalkers["313"] = { station: null, details: "", timestamp: 0 };
                 }
             }
-            
-            // Nur echte Stationen aktualisieren den Zeitstempel
-            activeTalkers["313"] = {
-                station: stationName,
-                details: detailsText,
-                timestamp: Date.now()
-            };
         }
     } catch (e) {
-        // Ignorieren
+        // Ignorieren (z. B. Klartext-Logzeilen oder fremde Formate)
     }
 });
 
-// API-Endpunkt: 3 Sekunden Puffer, danach wird sauber auf "Keine aktive Station" geschaltet
+// API-Endpunkt: Sprecher bleibt aktiv, bis das Stop-Paket kommt
 app.get('/api/tg/:tgId', (req, res) => {
     const tgId = req.params.tgId;
     const currentData = activeTalkers[tgId];
-    
+
     const now = Date.now();
-    const timeoutLimit = 3000; // 3 Sekunden Puffer nach dem letzten echten Sprachpaket
-    
-    if (currentData && currentData.station && (now - currentData.timestamp < timeoutLimit)) {
+    // Sicherheitsnetz: Nur greifen, wenn ein Stop-Paket verloren gegangen ist
+    const safetyLimit = 10 * 60 * 1000; // 10 Minuten
+
+    if (currentData && currentData.station && (now - currentData.timestamp < safetyLimit)) {
         res.json({
             success: true,
             tg: tgId,
